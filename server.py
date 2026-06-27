@@ -365,7 +365,10 @@ var STATE = {
   mode:         'fit',
   pan:          { x: 0, y: 0 },
   drag:         { active: false, startX: 0, startY: 0, originX: 0, originY: 0 },
-  streamActive: false,
+  streamActive:    false,
+  streamTabActive: false,   // чи відкрита вкладка трансляції
+  streamConnected: false,   // чи підключений MJPEG стрім
+  pollTimer:       null,    // таймер polling /api/stream-info
   fps:          """ + fps_val + """,
   quality:      """ + qual_val + """,
 };
@@ -487,31 +490,58 @@ async function pushStreamSettings(fps, quality) {
 }
 
 // ── STREAM ─────────────────────────────────────────────────────────────────
-function startStream() {
-  if (STATE.streamActive) return;
-  STATE.streamActive = true;
+
+// Запускає стрім — показує зображення з /stream
+function _connectStream() {
+  DOM.streamEmpty.style.display = 'none';
+  DOM.streamImg.style.display   = 'block';
+  DOM.streamImg.src = '/stream?' + Date.now();
+  DOM.streamImg.onload = function() {
+    DOM.streamStatus.textContent = 'LIVE';
+    DOM.streamStatus.classList.add('live');
+  };
+  DOM.streamImg.onerror = function() {
+    DOM.streamStatus.textContent = 'помилка з\'єднання';
+    DOM.streamStatus.classList.remove('live');
+    // При помилці повертаємось до polling
+    DOM.streamImg.style.display   = 'none';
+    DOM.streamEmpty.style.display = '';
+    STATE.streamConnected = false;
+    _pollStreamInfo();
+  };
+}
+
+// Polling — кожні 2с питає /api/stream-info поки active не стане true
+function _pollStreamInfo() {
+  if (!STATE.streamTabActive || STATE.streamConnected) return;
   fetch('/api/stream-info').then(function(r) { return r.json(); }).then(function(info) {
-    if (!info.available) {
-      DOM.streamHint.innerHTML = info.message || 'Стрім недоступний';
-      return;
+    DOM.streamHint.innerHTML = info.message || 'Очікування...';
+    if (info.available) {
+      STATE.streamConnected = true;
+      _connectStream();
+    } else {
+      // Повторюємо через 2 секунди
+      STATE.pollTimer = setTimeout(_pollStreamInfo, 2000);
     }
-    DOM.streamEmpty.style.display = 'none';
-    DOM.streamImg.style.display   = 'block';
-    DOM.streamImg.src = '/stream?' + Date.now();
-    DOM.streamImg.onload = function() {
-      DOM.streamStatus.textContent = 'LIVE';
-      DOM.streamStatus.classList.add('live');
-    };
-    DOM.streamImg.onerror = function() {
-      DOM.streamStatus.textContent = 'помилка';
-      DOM.streamStatus.classList.remove('live');
-    };
   }).catch(function() {
-    DOM.streamHint.textContent = 'Сервер не відповідає';
+    DOM.streamHint.textContent = 'Немає з\'єднання з сервером...';
+    STATE.pollTimer = setTimeout(_pollStreamInfo, 2000);
   });
 }
+
+function startStream() {
+  STATE.streamTabActive  = true;
+  STATE.streamConnected  = false;
+  clearTimeout(STATE.pollTimer);
+  DOM.streamStatus.textContent = 'очікування...';
+  DOM.streamStatus.classList.remove('live');
+  _pollStreamInfo();
+}
+
 function stopStream() {
-  STATE.streamActive = false;
+  STATE.streamTabActive  = false;
+  STATE.streamConnected  = false;
+  clearTimeout(STATE.pollTimer);
   DOM.streamImg.src  = '';
   DOM.streamImg.style.display   = 'none';
   DOM.streamEmpty.style.display = '';
@@ -674,24 +704,51 @@ def _set_auth_cookie(token):
 # MJPEG СТРІМ
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _capture_frame():
-    """Знімає кадр з області з capture.json, повертає JPEG bytes або None."""
-    if not STREAM_OK:
-        return None
+def _read_capture_config():
+    """Читає capture.json, повертає dict або None якщо файл відсутній/битий."""
     try:
         if not CAPTURE_CONFIG.exists():
             return None
         with open(CAPTURE_CONFIG) as f:
-            cfg = json.load(f)
+            return json.load(f)
+    except Exception as e:
+        print("[_read_capture_config] Помилка: " + str(e))
+        return None
+
+
+def _capture_frame():
+    """
+    Знімає кадр з області з capture.json.
+    Повертає JPEG bytes або None якщо:
+    - бібліотеки відсутні
+    - файл конфігурації відсутній
+    - active != true
+    - розмір менший за мінімальний
+    """
+    if not STREAM_OK:
+        return None
+    try:
+        cfg = _read_capture_config()
+        if cfg is None:
+            return None
+        # Перевіряємо прапорець підтвердження
+        if not cfg.get("active", False):
+            return None
+        w = int(cfg["width"])
+        h = int(cfg["height"])
+        # Перевіряємо мінімальний розмір
+        if w < 10 or h < 10:
+            print("[_capture_frame] Розмір занадто малий: " + str(w) + "x" + str(h))
+            return None
         region = {
             "left":   int(cfg["x"]),
             "top":    int(cfg["y"]),
-            "width":  int(cfg["width"]),
-            "height": int(cfg["height"]),
+            "width":  w,
+            "height": h,
         }
         with _stream_lock:
             quality = _stream_quality
-        with mss.mss() as sct:
+        with mss.MSS() as sct:
             shot = sct.grab(region)
             img  = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         buf = io.BytesIO()
@@ -810,9 +867,14 @@ class ProjectorHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"available": False,
                              "message": "Встановіть: pip install mss pillow"})
             return
-        if not CAPTURE_CONFIG.exists():
+        cfg = _read_capture_config()
+        if cfg is None:
             self._send_json({"available": False,
                              "message": "Запустіть overlay.py і оберіть область захвату"})
+            return
+        if not cfg.get("active", False):
+            self._send_json({"available": False,
+                             "message": "Натисніть 'Почати трансляцію' в overlay.py"})
             return
         self._send_json({"available": True})
 
