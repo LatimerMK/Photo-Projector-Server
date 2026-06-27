@@ -33,6 +33,12 @@ _stream_fps      = DEFAULT_FPS
 _stream_quality  = DEFAULT_QUALITY
 _stream_lock     = threading.Lock()
 
+# ── BROADCAST СТРІМ ───────────────────────────────────────────────────────────
+_broadcast_clients      = []   # список черг підключених клієнтів
+_broadcast_clients_lock = threading.Lock()
+_broadcast_thread       = None
+_last_frame             = None  # останній кадр для нових клієнтів
+
 # ── ПЕРЕВІРКА ЗАЛЕЖНОСТЕЙ ─────────────────────────────────────────────────────
 try:
     import mss
@@ -203,12 +209,13 @@ body.ui-visible { cursor: default; }
 #controls {
   position: absolute; top: 0; left: 0; right: 0;
   padding: 52px 20px 12px;
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: nowrap;
   background: linear-gradient(to bottom, rgba(0,0,0,0.8) 0%, transparent 100%);
+  overflow-x: auto;
 }
 #file-name {
-  font-size: 14px; color: #ccc; margin-right: auto;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px;
+  font-size: 13px; color: #ccc;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
 }
 #counter { font-size: 13px; color: #888; white-space: nowrap; }
 
@@ -223,20 +230,20 @@ body.ui-visible { cursor: default; }
 .btn:hover  { background: rgba(255,255,255,0.25); }
 .btn.active { background: rgba(255,255,255,0.9); color: #000; border-color: transparent; }
 
-/* ── SLIDERS ── */
-.slider-wrap  { display: flex; align-items: center; gap: 8px; }
-.slider-label { font-size: 12px; color: #999; white-space: nowrap; }
-.slider-val   { font-size: 13px; color: #ccc; min-width: 44px; text-align: right; }
-
-input[type=range] {
-  -webkit-appearance: none; height: 4px;
-  background: rgba(255,255,255,0.3); border-radius: 2px; outline: none; cursor: pointer;
+/* ── STEPPERS (замість слайдерів) ── */
+.stepper { display: flex; align-items: center; gap: 0; }
+.stepper-label { font-size: 12px; color: #999; white-space: nowrap; margin-right: 6px; }
+.stepper-btn {
+  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
+  color: #fff; width: 26px; height: 26px; border-radius: 5px;
+  font-size: 15px; cursor: pointer; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s; flex-shrink: 0;
 }
-input[type=range].w100 { width: 100px; }
-input[type=range].w80  { width: 80px; }
-input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 16px; height: 16px;
-  background: #fff; border-radius: 50%;
+.stepper-btn:hover { background: rgba(255,255,255,0.3); }
+.stepper-val {
+  font-size: 13px; color: #ccc; min-width: 42px; text-align: center;
+  padding: 0 4px;
 }
 
 /* ── NAV ARROWS ── */
@@ -341,27 +348,28 @@ input[type=range]::-webkit-slider-thumb {
     <span id="counter"></span>
     <button class="btn active" data-mode="fit">Вписати</button>
     <button class="btn" data-mode="fill">Заповнити</button>
-    <button class="btn" data-scale="100">100%</button>
-    <button class="btn" data-scale="150">150%</button>
-    <button class="btn" data-scale="200">200%</button>
-    <div class="slider-wrap">
-      <input type="range" class="w100" id="scale-slider" min="10" max="400" value="100">
-      <span class="slider-val" id="scale-label">100%</span>
+    <div class="stepper">
+      <span class="stepper-label">Масштаб</span>
+      <button class="stepper-btn" id="scale-down">&#8722;</button>
+      <span class="stepper-val" id="scale-label">100%</span>
+      <button class="stepper-btn" id="scale-up">&#43;</button>
     </div>
   </div>
   <button class="nav-arrow" id="arrow-prev">&#8249;</button>
   <button class="nav-arrow" id="arrow-next">&#8250;</button>
   <div id="thumbnails-bar"></div>
   <div id="stream-controls">
-    <div class="slider-wrap">
-      <span class="slider-label">FPS</span>
-      <input type="range" class="w80" id="fps-slider" min="1" max="10" value=\"""" + fps_val + """\">
-      <span class="slider-val" id="fps-label">""" + fps_val + """</span>
+    <div class="stepper">
+      <span class="stepper-label">FPS</span>
+      <button class="stepper-btn" id="fps-down">&#8722;</button>
+      <span class="stepper-val" id="fps-label">""" + fps_val + """</span>
+      <button class="stepper-btn" id="fps-up">&#43;</button>
     </div>
-    <div class="slider-wrap">
-      <span class="slider-label">Якість</span>
-      <input type="range" class="w80" id="qual-slider" min="10" max="95" value=\"""" + qual_val + """\">
-      <span class="slider-val" id="qual-label">""" + qual_val + """%</span>
+    <div class="stepper">
+      <span class="stepper-label">Якість</span>
+      <button class="stepper-btn" id="qual-down">&#8722;</button>
+      <span class="stepper-val" id="qual-label">""" + qual_val + """%</span>
+      <button class="stepper-btn" id="qual-up">&#43;</button>
     </div>
     <span id="stream-status">очікування...</span>
     <button class="btn" id="fullscreen-btn" onclick="toggleFullscreen()" title="Повний екран">⛶</button>
@@ -402,9 +410,11 @@ function cacheDOM() {
   DOM.streamHint   = document.getElementById('stream-hint');
   DOM.streamStatus = document.getElementById('stream-status');
   DOM.streamCtrl   = document.getElementById('stream-controls');
-  DOM.fpsSlider    = document.getElementById('fps-slider');
+  DOM.fpsDown      = document.getElementById('fps-down');
+  DOM.fpsUp        = document.getElementById('fps-up');
   DOM.fpsLabel     = document.getElementById('fps-label');
-  DOM.qualSlider   = document.getElementById('qual-slider');
+  DOM.qualDown     = document.getElementById('qual-down');
+  DOM.qualUp       = document.getElementById('qual-up');
   DOM.qualLabel    = document.getElementById('qual-label');
   DOM.photoStage   = document.getElementById('photo-stage');
   DOM.mainImg      = document.getElementById('main-img');
@@ -413,8 +423,8 @@ function cacheDOM() {
   DOM.counter      = document.getElementById('counter');
   DOM.controls     = document.getElementById('controls');
   DOM.modeBtns     = document.querySelectorAll('[data-mode]');
-  DOM.scaleBtns    = document.querySelectorAll('[data-scale]');
-  DOM.scaleSlider  = document.getElementById('scale-slider');
+  DOM.scaleDown    = document.getElementById('scale-down');
+  DOM.scaleUp      = document.getElementById('scale-up');
   DOM.scaleLabel   = document.getElementById('scale-label');
   DOM.thumbsBar    = document.getElementById('thumbnails-bar');
   DOM.arrowPrev    = document.getElementById('arrow-prev');
@@ -465,10 +475,10 @@ function applyPanTransform() {
 
 // ── SCALE ──────────────────────────────────────────────────────────────────
 function applyCustomScale(pct) {
+  pct = Math.max(10, Math.min(400, pct));
   DOM.mainImg.className      = 'mode-custom';
   DOM.mainImg.style.width    = pct + 'vw';
   DOM.mainImg.style.height   = '';
-  DOM.scaleSlider.value      = pct;
   DOM.scaleLabel.textContent = pct + '%';
   STATE.scale = pct; STATE.mode = 'custom';
   DOM.modeBtns.forEach(function(b) { b.classList.remove('active'); });
@@ -482,7 +492,7 @@ function applyMode(mode) {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
   resetPan();
-  DOM.scaleSlider.value      = 100;
+  STATE.scale = 100;
   DOM.scaleLabel.textContent = '100%';
 }
 
@@ -655,22 +665,40 @@ function initEvents() {
   DOM.modeBtns.forEach(function(b) {
     b.addEventListener('click', function() { applyMode(b.dataset.mode); });
   });
-  DOM.scaleBtns.forEach(function(b) {
-    b.addEventListener('click', function() { applyCustomScale(Number(b.dataset.scale)); });
+
+  // Stepper: масштаб
+  DOM.scaleDown.addEventListener('click', function() {
+    var cur = STATE.scale || 100;
+    applyCustomScale(cur - 10);
   });
-  DOM.scaleSlider.addEventListener('input', function() {
-    applyCustomScale(Number(DOM.scaleSlider.value));
+  DOM.scaleUp.addEventListener('click', function() {
+    var cur = STATE.scale || 100;
+    applyCustomScale(cur + 10);
   });
+
   DOM.arrowPrev.addEventListener('click', function() { showPhoto(STATE.index - 1); });
   DOM.arrowNext.addEventListener('click', function() { showPhoto(STATE.index + 1); });
 
-  DOM.fpsSlider.addEventListener('input', function() {
-    STATE.fps = Number(DOM.fpsSlider.value);
+  // Stepper: FPS
+  DOM.fpsDown.addEventListener('click', function() {
+    STATE.fps = Math.max(1, STATE.fps - 1);
     DOM.fpsLabel.textContent = STATE.fps;
     pushStreamSettings(STATE.fps, STATE.quality);
   });
-  DOM.qualSlider.addEventListener('input', function() {
-    STATE.quality = Number(DOM.qualSlider.value);
+  DOM.fpsUp.addEventListener('click', function() {
+    STATE.fps = Math.min(10, STATE.fps + 1);
+    DOM.fpsLabel.textContent = STATE.fps;
+    pushStreamSettings(STATE.fps, STATE.quality);
+  });
+
+  // Stepper: якість
+  DOM.qualDown.addEventListener('click', function() {
+    STATE.quality = Math.max(10, STATE.quality - 5);
+    DOM.qualLabel.textContent = STATE.quality + '%';
+    pushStreamSettings(STATE.fps, STATE.quality);
+  });
+  DOM.qualUp.addEventListener('click', function() {
+    STATE.quality = Math.min(95, STATE.quality + 5);
     DOM.qualLabel.textContent = STATE.quality + '%';
     pushStreamSettings(STATE.fps, STATE.quality);
   });
@@ -797,9 +825,14 @@ def _capture_frame():
         return None
 
 
-def _stream_generator(handler):
-    """Нескінченний MJPEG генератор — надсилає кадри поки з'єднання живе."""
+def _broadcast_loop():
+    """
+    Окремий потік: знімає кадри і розсилає всім підключеним клієнтам.
+    Запускається один раз при першому підключенні до /stream.
+    """
+    global _last_frame
     boundary = b"--frame"
+    print("[broadcast] Потік запущено")
     while True:
         try:
             with _stream_lock:
@@ -808,19 +841,84 @@ def _stream_generator(handler):
             if frame is None:
                 time.sleep(0.5)
                 continue
-            header = (
+            _last_frame = frame
+            packet = (
                 boundary + b"\r\n"
                 b"Content-Type: image/jpeg\r\n"
                 b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
+                + frame + b"\r\n"
             )
-            handler.wfile.write(header + frame + b"\r\n")
-            handler.wfile.flush()
+            with _broadcast_clients_lock:
+                clients = list(_broadcast_clients)
+            for q in clients:
+                try:
+                    q.put_nowait(packet)
+                except Exception:
+                    pass  # черга переповнена — клієнт повільний
             time.sleep(1.0 / max(fps, 1))
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            break
         except Exception as e:
-            print("[_stream_generator] Помилка: " + str(e))
-            break
+            print("[broadcast] Помилка: " + str(e))
+            time.sleep(1.0)
+
+
+def _ensure_broadcast_thread():
+    """Запускає broadcast-потік якщо він ще не запущений."""
+    global _broadcast_thread
+    with _broadcast_clients_lock:
+        if _broadcast_thread is None or not _broadcast_thread.is_alive():
+            _broadcast_thread = threading.Thread(
+                target=_broadcast_loop, daemon=True, name="broadcast"
+            )
+            _broadcast_thread.start()
+
+
+def _stream_generator(handler):
+    """Підписує клієнта на broadcast-чергу і надсилає кадри."""
+    import queue as _queue
+    client_ip = handler.client_address[0]
+    print("[stream] Підключено: " + client_ip)
+    _ensure_broadcast_thread()
+
+    q = _queue.Queue(maxsize=3)
+    with _broadcast_clients_lock:
+        _broadcast_clients.append(q)
+
+    # Одразу надсилаємо останній кадр якщо є
+    if _last_frame:
+        try:
+            boundary = b"--frame"
+            packet = (
+                boundary + b"\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Content-Length: " + str(len(_last_frame)).encode() + b"\r\n\r\n"
+                + _last_frame + b"\r\n"
+            )
+            handler.wfile.write(packet)
+            handler.wfile.flush()
+        except Exception:
+            pass
+
+    try:
+        while True:
+            try:
+                packet = q.get(timeout=5.0)
+                handler.wfile.write(packet)
+                handler.wfile.flush()
+            except _queue.Empty:
+                # Надсилаємо keepalive щоб з'єднання не рвалось
+                handler.wfile.write(b"--frame\r\n\r\n")
+                handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        pass
+    except Exception as e:
+        print("[stream] Помилка (" + client_ip + "): " + str(e))
+    finally:
+        with _broadcast_clients_lock:
+            try:
+                _broadcast_clients.remove(q)
+            except ValueError:
+                pass
+        print("[stream] Відключено: " + client_ip)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
