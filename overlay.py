@@ -48,9 +48,72 @@ class CaptureOverlay:
         self._build_panel()
         self._build_canvas()
         self._bind_events()
-        self._apply_geometry(DEFAULT_X, DEFAULT_Y, DEFAULT_W, DEFAULT_H)
+        x, y, w, h = self._load_last_geometry()
+        self._apply_geometry(x, y, w, h)
         self.root.after(100, self._draw_frame)
         self._save_config(active=False)
+
+    # ── ВІДНОВЛЕННЯ ГЕОМЕТРІЇ ────────────────────────────────────────────────
+
+    def _load_last_geometry(self):
+        """
+        Читає збережену позицію/розмір з capture.json.
+        Перевіряє чи рамка вміщується на одному з доступних моніторів.
+        При будь-якій помилці повертає стандартні значення.
+        """
+        try:
+            if not CAPTURE_CONFIG.exists():
+                return DEFAULT_X, DEFAULT_Y, DEFAULT_W, DEFAULT_H
+
+            with open(CAPTURE_CONFIG) as f:
+                cfg = json.load(f)
+
+            x = int(cfg.get("x",      DEFAULT_X))
+            y = int(cfg.get("y",      DEFAULT_Y))
+            w = int(cfg.get("width",  DEFAULT_W))
+            h = int(cfg.get("height", DEFAULT_H))
+
+            if w < MIN_WIDTH or h < MIN_HEIGHT:
+                return DEFAULT_X, DEFAULT_Y, DEFAULT_W, DEFAULT_H
+
+            monitors = self._get_monitors()
+            for mx, my, mw, mh in monitors:
+                # Рамка повністю вміщується на цьому моніторі?
+                if (mx <= x and y >= my
+                        and x + w <= mx + mw
+                        and y + h + PANEL_H <= my + mh):
+                    print("  Відновлено геометрію: " + str(w) + "x" + str(h)
+                          + "+" + str(x) + "+" + str(y))
+                    return x, y, w, h
+
+            print("  Збережена позиція недоступна — використовую стандартну")
+            return DEFAULT_X, DEFAULT_Y, DEFAULT_W, DEFAULT_H
+
+        except Exception as e:
+            print("[_load_last_geometry] Помилка: " + str(e))
+            return DEFAULT_X, DEFAULT_Y, DEFAULT_W, DEFAULT_H
+
+    def _get_monitors(self):
+        """
+        Повертає список (x, y, width, height) для кожного монітора.
+        Спочатку пробує screeninfo, потім tk fallback (тільки головний екран).
+        """
+        try:
+            from screeninfo import get_monitors
+            result = [(m.x, m.y, m.width, m.height) for m in get_monitors()]
+            if result:
+                return result
+        except Exception:
+            pass
+
+        try:
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+            return [(0, 0, sw, sh)]
+        except Exception:
+            pass
+
+        return [(0, 0, 1920, 1080)]
 
     # ── ВІКНО ─────────────────────────────────────────────────────────────────
 
