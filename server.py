@@ -501,7 +501,7 @@ function _connectStream() {
     DOM.streamStatus.classList.add('live');
   };
   DOM.streamImg.onerror = function() {
-    DOM.streamStatus.textContent = 'помилка з\'єднання';
+    DOM.streamStatus.textContent = "помилка з'єднання";
     DOM.streamStatus.classList.remove('live');
     // При помилці повертаємось до polling
     DOM.streamImg.style.display   = 'none';
@@ -524,7 +524,7 @@ function _pollStreamInfo() {
       STATE.pollTimer = setTimeout(_pollStreamInfo, 2000);
     }
   }).catch(function() {
-    DOM.streamHint.textContent = 'Немає з\'єднання з сервером...';
+    DOM.streamHint.textContent = "Немає з'єднання з сервером...";
     STATE.pollTimer = setTimeout(_pollStreamInfo, 2000);
   });
 }

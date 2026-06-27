@@ -45,10 +45,12 @@ class CaptureOverlay:
         self._corners_coords = {}
 
         self._setup_window()
-        self._build_canvas()
-        self._build_panel()
+        self._build_panel()    # спочатку панель — щоб size_var існував
+        self._build_canvas()   # _draw_frame викличе _update_label → потребує size_var
         self._bind_events()
         self._apply_geometry(DEFAULT_X, DEFAULT_Y, DEFAULT_W, DEFAULT_H)
+        # Перемалювати після реального відображення вікна
+        self.root.after(100, self._draw_frame)
         # Зберігаємо початковий стан БЕЗ active=true
         self._save_config(active=False)
 
@@ -70,30 +72,30 @@ class CaptureOverlay:
 
     def _build_canvas(self):
         self.canvas = tk.Canvas(self.root, bg="black", highlightthickness=0)
-        self.canvas.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+        # fill=BOTH + expand=True — займає весь простір крім панелі знизу
+        self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self._draw_frame()
 
     def _draw_frame(self):
         self.canvas.delete("all")
-        w = self.root.winfo_width()  or DEFAULT_W
-        h = self.root.winfo_height() or (DEFAULT_H + PANEL_H)
-        # Рамка займає все КРІМ панелі внизу
-        frame_h = h - PANEL_H
+        # Canvas займає весь простір крім панелі — беремо його розміри напряму
+        w = self.canvas.winfo_width()  or DEFAULT_W
+        h = self.canvas.winfo_height() or DEFAULT_H
         b = BORDER_WIDTH
         s = HANDLE_SIZE
 
         # Червона рамка
         self.canvas.create_rectangle(
-            b, b, w - b, frame_h - b,
+            b, b, w - b, h - b,
             outline=BORDER_COLOR, width=b, fill=""
         )
 
         # Куточки
         corners = {
-            "nw": (0,     0,          s,   s),
-            "ne": (w - s, 0,          w,   s),
-            "sw": (0,     frame_h-s,  s,   frame_h),
-            "se": (w - s, frame_h-s,  w,   frame_h),
+            "nw": (0,     0,      s,   s),
+            "ne": (w - s, 0,      w,   s),
+            "sw": (0,     h - s,  s,   h),
+            "se": (w - s, h - s,  w,   h),
         }
         cursors = {
             "nw": "size_nw_se", "ne": "size_ne_sw",
@@ -118,7 +120,7 @@ class CaptureOverlay:
 
         # Підпис з розміром
         self._label = self.canvas.create_text(
-            w // 2, frame_h // 2,
+            w // 2, h // 2,
             text="", fill="#ff6666",
             font=("Segoe UI", 10), anchor="center"
         )
@@ -129,10 +131,12 @@ class CaptureOverlay:
     def _build_panel(self):
         """Панель з кнопками — звичайний tk.Frame, не прозорий."""
         self.panel = tk.Frame(self.root, bg="#111111", height=PANEL_H)
-        self.panel.place(x=0, rely=1.0, anchor="sw", relwidth=1.0, height=PANEL_H)
+        # pack знизу — canvas потім заповнить решту через expand=True
+        self.panel.pack(side=tk.BOTTOM, fill=tk.X)
+        self.panel.pack_propagate(False)  # фіксована висота PANEL_H
 
         # Розмір (текстовий підпис)
-        self.size_var = tk.StringVar(value="800 x 600")
+        self.size_var = tk.StringVar(value=str(DEFAULT_W) + " x " + str(DEFAULT_H))
         tk.Label(
             self.panel, textvariable=self.size_var,
             bg="#111111", fg="#888888", font=("Segoe UI", 10)
@@ -169,14 +173,15 @@ class CaptureOverlay:
 
     def _update_label(self):
         try:
-            w = self.root.winfo_width()
-            h = self.root.winfo_height() - PANEL_H
+            w = self.canvas.winfo_width()  or DEFAULT_W
+            h = self.canvas.winfo_height() or DEFAULT_H
             x = self.root.winfo_x()
             y = self.root.winfo_y()
             text = str(w) + " x " + str(h) + "   (" + str(x) + ", " + str(y) + ")"
             self.canvas.itemconfig(self._label, text=text)
             self.canvas.coords(self._label, w // 2, h // 2)
-            self.size_var.set(str(w) + " x " + str(h))
+            if hasattr(self, 'size_var'):
+                self.size_var.set(str(w) + " x " + str(h))
         except Exception as e:
             print("[_update_label] Помилка: " + str(e))
 
@@ -312,8 +317,8 @@ class CaptureOverlay:
             cfg = {
                 "x":      self.root.winfo_x(),
                 "y":      self.root.winfo_y(),
-                "width":  self.root.winfo_width(),
-                "height": self.root.winfo_height() - PANEL_H,  # висота БЕЗ панелі
+                "width":  self.canvas.winfo_width()  or DEFAULT_W,
+                "height": self.canvas.winfo_height() or DEFAULT_H,
                 "active": active,
             }
             with open(CAPTURE_CONFIG, "w") as f:
