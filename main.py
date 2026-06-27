@@ -12,7 +12,7 @@ from pathlib import Path
 
 # ── КОНФІГУРАЦІЯ ──────────────────────────────────────────────────────────────
 PORT = 8080                        # Порт сервера
-PHOTOS_DIR = Path("photos")        # Папка з фотографіями
+PHOTOS_DIR = Path("photos")         # Папка з фотографіями (photo або photos)
 SUPPORTED_EXTENSIONS = {           # Підтримувані формати зображень
     ".jpg", ".jpeg", ".png",
     ".gif", ".bmp", ".webp", ".svg"
@@ -50,11 +50,13 @@ HTML = f"""<!DOCTYPE html>
     align-items: center;
     justify-content: center;
     overflow: hidden;
+    cursor: grab;
   }}
+
+  #stage:active {{ cursor: grabbing; }}
 
   #main-img {{
     display: block;
-    transition: transform 0.2s ease;
     transform-origin: center center;
     user-select: none;
     -webkit-user-drag: none;
@@ -287,14 +289,35 @@ HTML = f"""<!DOCTYPE html>
 <script>
 // ── STATE ────────────────────────────────────────────────────────────────────
 const STATE = {{
-  photos: [],        // масив {{name, url}}
-  index: 0,          // поточний індекс
-  mode: 'fit',       // 'fit' | 'fill' | 'custom'
-  scale: 100,        // масштаб у % (лише для custom)
-  uiTimer: null,     // таймер приховування UI
+  photos:   [],        // масив {{name, url}}
+  index:    0,         // поточний індекс
+  mode:     'fit',     // 'fit' | 'fill' | 'custom'
+  scale:    100,       // масштаб у % (лише для custom)
+  uiTimer:  null,      // таймер приховування UI
+
+  // Drag-to-pan
+  pan:      {{ x: 0, y: 0 }},   // поточне зміщення px
+  drag:     {{                   // стан перетягування
+    active: false,
+    startX: 0,
+    startY: 0,
+    originX: 0,
+    originY: 0,
+  }},
 }};
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
+
+/** Скидає pan-позицію до центру */
+function resetPan() {{
+  STATE.pan = {{ x: 0, y: 0 }};
+  applyPanTransform();
+}}
+
+/** Застосовує translate до зображення */
+function applyPanTransform() {{
+  DOM.mainImg.style.transform = `translate(${{STATE.pan.x}}px, ${{STATE.pan.y}}px)`;
+}}
 
 /** Встановлює масштаб зображення в режимі custom */
 function applyCustomScale(pct) {{
@@ -307,6 +330,7 @@ function applyCustomScale(pct) {{
   STATE.scale = pct;
   STATE.mode = 'custom';
   updateModeButtons(null);
+  // Не скидаємо pan — зручно підлаштовувати масштаб без зсуву
 }}
 
 /** Оновлює активну кнопку режиму */
@@ -340,7 +364,7 @@ function scrollThumbIntoView(index) {{
 /** Отримує список фото з сервера */
 async function fetchPhotos() {{
   try {{
-    const res = await fetch('/api/photos');
+    const res  = await fetch('/api/photos');
     const data = await res.json();
     return data.photos || [];
   }} catch (e) {{
@@ -353,19 +377,19 @@ async function fetchPhotos() {{
 
 // Кешування DOM-елементів
 const DOM = {{
-  stage:      document.getElementById('stage'),
-  emptyState: document.getElementById('empty-state'),
-  mainImg:    document.getElementById('main-img'),
-  overlay:    document.getElementById('ui-overlay'),
-  fileName:   document.getElementById('file-name'),
-  counter:    document.getElementById('counter'),
-  modeBtns:   document.querySelectorAll('[data-mode]'),
-  scaleBtns:  document.querySelectorAll('[data-scale]'),
-  scaleSlider:document.getElementById('scale-slider'),
-  scaleLabel: document.getElementById('scale-label'),
-  thumbsBar:  document.getElementById('thumbnails-bar'),
-  arrowPrev:  document.getElementById('arrow-prev'),
-  arrowNext:  document.getElementById('arrow-next'),
+  stage:       document.getElementById('stage'),
+  emptyState:  document.getElementById('empty-state'),
+  mainImg:     document.getElementById('main-img'),
+  overlay:     document.getElementById('ui-overlay'),
+  fileName:    document.getElementById('file-name'),
+  counter:     document.getElementById('counter'),
+  modeBtns:    document.querySelectorAll('[data-mode]'),
+  scaleBtns:   document.querySelectorAll('[data-scale]'),
+  scaleSlider: document.getElementById('scale-slider'),
+  scaleLabel:  document.getElementById('scale-label'),
+  thumbsBar:   document.getElementById('thumbnails-bar'),
+  arrowPrev:   document.getElementById('arrow-prev'),
+  arrowNext:   document.getElementById('arrow-next'),
 }};
 
 /** Показати фото за індексом */
@@ -373,18 +397,18 @@ function showPhoto(index) {{
   const photos = STATE.photos;
   if (!photos.length) return;
 
-  // Захист меж
   STATE.index = (index + photos.length) % photos.length;
   const photo = photos[STATE.index];
 
-  // Оновити зображення
+  // Оновити зображення і скинути позицію
   DOM.mainImg.src = photo.url;
   DOM.mainImg.style.display = 'block';
   DOM.emptyState.style.display = 'none';
+  resetPan();
 
   // Оновити підпис і лічильник
   DOM.fileName.textContent = photo.name;
-  DOM.counter.textContent = `${{STATE.index + 1}} / ${{photos.length}}`;
+  DOM.counter.textContent  = `${{STATE.index + 1}} / ${{photos.length}}`;
 
   // Оновити мініатюри
   Array.from(DOM.thumbsBar.children).forEach((el, i) => {{
@@ -400,8 +424,8 @@ function buildThumbnails(photos) {{
   DOM.thumbsBar.innerHTML = '';
   photos.forEach((photo, i) => {{
     const img = document.createElement('img');
-    img.src   = photo.url;
-    img.title = photo.name;
+    img.src       = photo.url;
+    img.title     = photo.name;
     img.className = 'thumb' + (i === 0 ? ' active' : '');
     img.addEventListener('click', () => showPhoto(i));
     DOM.thumbsBar.appendChild(img);
@@ -411,47 +435,89 @@ function buildThumbnails(photos) {{
 /** Застосувати режим масштабу fit/fill */
 function applyMode(mode) {{
   const img = DOM.mainImg;
-  img.className = 'mode-' + mode;
+  img.className    = 'mode-' + mode;
   img.style.width  = '';
   img.style.height = '';
   STATE.mode = mode;
   updateModeButtons(mode);
+  resetPan();
 
-  // Синхронізувати повзунок: скидаємо до 100
-  DOM.scaleSlider.value = 100;
+  DOM.scaleSlider.value      = 100;
   DOM.scaleLabel.textContent = '100%';
 }}
 
-// ── ПОДІЇ ────────────────────────────────────────────────────────────────────
+// ── ПОДІЇ: DRAG-TO-PAN ───────────────────────────────────────────────────────
 
-// Кнопки режиму (Вписати / Заповнити)
+DOM.stage.addEventListener('mousedown', e => {{
+  // Тільки ліва кнопка, не на елементах UI
+  if (e.button !== 0) return;
+  STATE.drag.active  = true;
+  STATE.drag.startX  = e.clientX;
+  STATE.drag.startY  = e.clientY;
+  STATE.drag.originX = STATE.pan.x;
+  STATE.drag.originY = STATE.pan.y;
+  DOM.stage.style.cursor = 'grabbing';
+  e.preventDefault();
+}});
+
+document.addEventListener('mousemove', e => {{
+  if (STATE.drag.active) {{
+    // Перетягування: оновлюємо pan
+    STATE.pan.x = STATE.drag.originX + (e.clientX - STATE.drag.startX);
+    STATE.pan.y = STATE.drag.originY + (e.clientY - STATE.drag.startY);
+    applyPanTransform();
+    // Не показуємо UI під час drag
+    return;
+  }}
+  // Звичайний рух миші → показати UI
+  showUI();
+}});
+
+document.addEventListener('mouseup', e => {{
+  if (!STATE.drag.active) return;
+  STATE.drag.active      = false;
+  DOM.stage.style.cursor = '';
+}});
+
+// Скасування drag якщо миша вийшла з вікна
+document.addEventListener('mouseleave', () => {{
+  STATE.drag.active      = false;
+  DOM.stage.style.cursor = '';
+}});
+
+// Курсор grab на stage (коли не dragging)
+DOM.stage.addEventListener('mouseenter', () => {{
+  if (!STATE.drag.active) DOM.stage.style.cursor = 'grab';
+}});
+DOM.stage.addEventListener('mouseleave', () => {{
+  DOM.stage.style.cursor = '';
+}});
+
+// ── ПОДІЇ: НАВІГАЦІЯ ─────────────────────────────────────────────────────────
+
 DOM.modeBtns.forEach(btn => {{
   btn.addEventListener('click', () => applyMode(btn.dataset.mode));
 }});
 
-// Кнопки фіксованого масштабу
 DOM.scaleBtns.forEach(btn => {{
   btn.addEventListener('click', () => applyCustomScale(Number(btn.dataset.scale)));
 }});
 
-// Повзунок
 DOM.scaleSlider.addEventListener('input', () => {{
   applyCustomScale(Number(DOM.scaleSlider.value));
 }});
 
-// Навігація стрілками
 DOM.arrowPrev.addEventListener('click', () => showPhoto(STATE.index - 1));
 DOM.arrowNext.addEventListener('click', () => showPhoto(STATE.index + 1));
 
-// Клавіатура
 document.addEventListener('keydown', e => {{
-  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   showPhoto(STATE.index - 1);
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown')  showPhoto(STATE.index + 1);
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')    showPhoto(STATE.index - 1);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown')   showPhoto(STATE.index + 1);
+  // R — скинути pan до центру
+  if (e.key === 'r' || e.key === 'R') resetPan();
   if (e.key === 'Escape') showUI();
 }});
 
-// Рух миші / тач → показати UI
-document.addEventListener('mousemove', showUI);
 document.addEventListener('touchstart', showUI);
 
 // ── ІНІЦІАЛІЗАЦІЯ ────────────────────────────────────────────────────────────
@@ -467,7 +533,6 @@ document.addEventListener('touchstart', showUI);
     DOM.arrowNext.style.display = 'none';
   }}
 
-  // Запустити таймер приховування UI після старту
   showUI();
 }})();
 </script>
@@ -540,7 +605,7 @@ class PhotoHandler(http.server.BaseHTTPRequestHandler):
     def _send_photo(self, url_path: str):
         """Відправити файл зображення."""
         try:
-            filename = urllib.parse.unquote(url_path.lstrip("/photos/"))
+            filename = urllib.parse.unquote(url_path[len("/photos/"):])
             file_path = PHOTOS_DIR / filename
 
             if not file_path.exists() or not file_path.is_file():
