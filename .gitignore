@@ -1,6 +1,6 @@
 # Environment — ніколи не комітити секрети
 .env
-
+*.json
 # Python
 __pycache__/
 *.py[cod]
