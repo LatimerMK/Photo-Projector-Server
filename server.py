@@ -173,13 +173,12 @@ body.ui-visible { cursor: default; }
   display: block; transform-origin: center center;
   user-select: none; -webkit-user-drag: none;
 }
-#main-img.mode-fit    { max-width: 100vw; max-height: 100vh; width: auto; height: auto; }
+#main-img.mode-fit    { width: 100vw; height: auto; }
 #main-img.mode-fill   { width: 100vw; height: 100vh; object-fit: cover; }
 #main-img.mode-custom { max-width: none; max-height: none; }
 
 #stream-img {
-  display: block; max-width: 100vw; max-height: 100vh;
-  width: auto; height: auto;
+  display: block; width: 100vw; height: auto;
   user-select: none; -webkit-user-drag: none;
 }
 
