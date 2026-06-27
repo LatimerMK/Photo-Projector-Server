@@ -41,17 +41,15 @@ class CaptureOverlay:
         self._start_ww  = 0
         self._start_wh  = 0
         self._save_job  = None
-        self._streaming = False     # Чи активна трансляція зараз
+        self._streaming = False
         self._corners_coords = {}
 
         self._setup_window()
-        self._build_panel()    # спочатку панель — щоб size_var існував
-        self._build_canvas()   # _draw_frame викличе _update_label → потребує size_var
+        self._build_panel()
+        self._build_canvas()
         self._bind_events()
         self._apply_geometry(DEFAULT_X, DEFAULT_Y, DEFAULT_W, DEFAULT_H)
-        # Перемалювати після реального відображення вікна
         self.root.after(100, self._draw_frame)
-        # Зберігаємо початковий стан БЕЗ active=true
         self._save_config(active=False)
 
     # ── ВІКНО ─────────────────────────────────────────────────────────────────
@@ -64,7 +62,6 @@ class CaptureOverlay:
         r.configure(bg="black")
 
     def _apply_geometry(self, x, y, w, h):
-        """Встановлює геометрію і чекає поки tkinter її реально застосує."""
         self.root.geometry(str(w) + "x" + str(h + PANEL_H) + "+" + str(x) + "+" + str(y))
         self.root.update_idletasks()
 
@@ -72,13 +69,11 @@ class CaptureOverlay:
 
     def _build_canvas(self):
         self.canvas = tk.Canvas(self.root, bg="black", highlightthickness=0)
-        # fill=BOTH + expand=True — займає весь простір крім панелі знизу
         self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self._draw_frame()
 
     def _draw_frame(self):
         self.canvas.delete("all")
-        # Canvas займає весь простір крім панелі — беремо його розміри напряму
         w = self.canvas.winfo_width()  or DEFAULT_W
         h = self.canvas.winfo_height() or DEFAULT_H
         b = BORDER_WIDTH
@@ -118,24 +113,16 @@ class CaptureOverlay:
                 lambda e: self.canvas.configure(cursor="fleur")
             )
 
-        # Підпис з розміром
-        self._label = self.canvas.create_text(
-            w // 2, h // 2,
-            text="", fill="#ff6666",
-            font=("Segoe UI", 10), anchor="center"
-        )
         self._update_label()
 
     # ── ПАНЕЛЬ КЕРУВАННЯ (знизу рамки) ────────────────────────────────────────
 
     def _build_panel(self):
-        """Панель з кнопками — звичайний tk.Frame, не прозорий."""
         self.panel = tk.Frame(self.root, bg="#111111", height=PANEL_H)
-        # pack знизу — canvas потім заповнить решту через expand=True
         self.panel.pack(side=tk.BOTTOM, fill=tk.X)
-        self.panel.pack_propagate(False)  # фіксована висота PANEL_H
+        self.panel.pack_propagate(False)
 
-        # Розмір (текстовий підпис)
+        # Розмір (текстовий підпис на панелі)
         self.size_var = tk.StringVar(value=str(DEFAULT_W) + " x " + str(DEFAULT_H))
         tk.Label(
             self.panel, textvariable=self.size_var,
@@ -169,7 +156,7 @@ class CaptureOverlay:
             command=self._quit
         ).pack(side=tk.RIGHT, padx=0, pady=6)
 
-    # ── ПІДПИС ────────────────────────────────────────────────────────────────
+    # ── ПІДПИС НА ПАНЕЛІ ──────────────────────────────────────────────────────
 
     def _update_label(self):
         try:
@@ -177,11 +164,8 @@ class CaptureOverlay:
             h = self.canvas.winfo_height() or DEFAULT_H
             x = self.root.winfo_x()
             y = self.root.winfo_y()
-            text = str(w) + " x " + str(h) + "   (" + str(x) + ", " + str(y) + ")"
-            self.canvas.itemconfig(self._label, text=text)
-            self.canvas.coords(self._label, w // 2, h // 2)
             if hasattr(self, 'size_var'):
-                self.size_var.set(str(w) + " x " + str(h))
+                self.size_var.set(str(w) + " x " + str(h) + "   (" + str(x) + ", " + str(y) + ")")
         except Exception as e:
             print("[_update_label] Помилка: " + str(e))
 
@@ -245,7 +229,7 @@ class CaptureOverlay:
         x = self._start_wx
         y = self._start_wy
         w = self._start_ww
-        h = self._start_wh   # включає PANEL_H
+        h = self._start_wh
 
         if "e" in corner:
             w = max(MIN_WIDTH, w + dx)
@@ -275,7 +259,6 @@ class CaptureOverlay:
     # ── ТРАНСЛЯЦІЯ ────────────────────────────────────────────────────────────
 
     def _confirm_and_start(self):
-        """Показує підтвердження і запускає трансляцію."""
         w = self.root.winfo_width()
         h = self.root.winfo_height() - PANEL_H
         msg = (
@@ -291,7 +274,6 @@ class CaptureOverlay:
     def _start_stream(self):
         self._streaming = True
         self._save_config(active=True)
-        # Оновлюємо кнопки
         self.btn_start.pack_forget()
         self.btn_stop.pack(side=tk.RIGHT, padx=8, pady=6)
         print("  Трансляція розпочата")
@@ -299,7 +281,6 @@ class CaptureOverlay:
     def _stop_stream(self):
         self._streaming = False
         self._save_config(active=False)
-        # Оновлюємо кнопки
         self.btn_stop.pack_forget()
         self.btn_start.pack(side=tk.RIGHT, padx=8, pady=6)
         print("  Трансляція зупинена")
@@ -307,7 +288,6 @@ class CaptureOverlay:
     # ── ЗБЕРЕЖЕННЯ ────────────────────────────────────────────────────────────
 
     def _schedule_save(self):
-        """Відкладене збереження — щоб не писати на диск при кожному пікселі."""
         if self._save_job:
             self.root.after_cancel(self._save_job)
         self._save_job = self.root.after(SAVE_DELAY_MS, lambda: self._save_config(self._streaming))

@@ -285,6 +285,21 @@ input[type=range]::-webkit-slider-thumb {
   background: rgba(255,255,255,0.1); color: #aaa;
 }
 #stream-status.live { background: rgba(80,200,80,0.2); color: #6d6; }
+
+#fullscreen-btn {
+  font-size: 18px; padding: 4px 10px; line-height: 1;
+  margin-left: 8px;
+}
+
+/* Fullscreen: ховаємо UI overlay крім кнопки виходу */
+:fullscreen #ui-overlay,
+:-webkit-full-screen #ui-overlay {
+  pointer-events: none;
+}
+:fullscreen #stream-controls,
+:-webkit-full-screen #stream-controls {
+  pointer-events: auto;
+}
 </style>"""
 
     html_body = """
@@ -350,6 +365,7 @@ input[type=range]::-webkit-slider-thumb {
       <span class="slider-val" id="qual-label">""" + qual_val + """%</span>
     </div>
     <span id="stream-status">очікування...</span>
+    <button class="btn" id="fullscreen-btn" onclick="toggleFullscreen()" title="Повний екран">⛶</button>
   </div>
 </div>"""
 
@@ -613,6 +629,29 @@ function initDrag() {
 }
 
 // ── EVENTS ─────────────────────────────────────────────────────────────────
+// ── FULLSCREEN ─────────────────────────────────────────────────────────────
+function toggleFullscreen() {
+  var el  = document.getElementById('panel-stream');
+  var btn = document.getElementById('fullscreen-btn');
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    var req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) req.call(el);
+  } else {
+    var exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) exit.call(document);
+  }
+}
+
+// Оновлюємо іконку кнопки при зміні fullscreen
+document.addEventListener('fullscreenchange', function() {
+  var btn = document.getElementById('fullscreen-btn');
+  if (btn) btn.textContent = document.fullscreenElement ? '✕' : '⛶';
+});
+document.addEventListener('webkitfullscreenchange', function() {
+  var btn = document.getElementById('fullscreen-btn');
+  if (btn) btn.textContent = document.webkitFullscreenElement ? '✕' : '⛶';
+});
+
 function initEvents() {
   DOM.modeBtns.forEach(function(b) {
     b.addEventListener('click', function() { applyMode(b.dataset.mode); });
