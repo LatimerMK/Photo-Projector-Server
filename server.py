@@ -179,12 +179,12 @@ body.ui-visible { cursor: default; }
   display: block; transform-origin: center center;
   user-select: none; -webkit-user-drag: none;
 }
-#main-img.mode-fit    { width: 100vw; height: auto; }
+#main-img.mode-fit    { width: 100vw; height: 100vh; object-fit: contain; }
 #main-img.mode-fill   { width: 100vw; height: 100vh; object-fit: cover; }
 #main-img.mode-custom { max-width: none; max-height: none; }
 
 #stream-img {
-  display: block; width: 100vw; height: auto;
+  display: block; width: 100vw; height: 100vh; object-fit: contain;
   user-select: none; -webkit-user-drag: none;
 }
 
@@ -283,10 +283,10 @@ body.ui-visible { cursor: default; }
   position: absolute; bottom: 0; left: 0; right: 0;
   padding: 12px 20px;
   background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%);
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: nowrap;
 }
 #stream-status {
-  font-size: 12px; margin-left: auto;
+  font-size: 12px;
   padding: 3px 10px; border-radius: 20px;
   background: rgba(255,255,255,0.1); color: #aaa;
 }
@@ -1150,7 +1150,7 @@ if __name__ == "__main__":
     print("  Зупинити: Ctrl+C")
     print()
 
-    server = http.server.HTTPServer(("", PORT), ProjectorHandler)
+    server = http.server.ThreadingHTTPServer(("", PORT), ProjectorHandler)
     server.allow_reuse_address = True
     try:
         server.serve_forever()
